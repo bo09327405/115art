@@ -1129,7 +1129,7 @@ document.addEventListener('click', closeBonus);
  * ==================================================================== */
 var CONSENT_VERSION = 'v1'; // 要跟 Code.gs 裡的 CONSENT_VERSION 對應；改了同意書文字記得兩邊都更新
 var CONSENT_TEXT =
-'【表演藝術課-臉部辨識授權同意書】\n\n'+
+'人臉辨識點名同意書（範本，請授課教師／學校依實際規定調整後使用，本文字僅供參考，非正式法律意見）\n\n'+
 '為提升課堂點名效率，授課教師擬於課堂點名時，透過鏡頭拍攝影像並即時擷取臉部特徵數值（不會儲存完整照片，只會儲存無法還原成影像的一組數字），用來自動比對出席學生身份。\n\n'+
 '1. 蒐集目的：課堂出缺勤點名紀錄之建立與查核。\n'+
 '2. 蒐集項目：臉部特徵數值（並非照片本身）、班級、座號、姓名、註冊時間。\n'+
@@ -1524,9 +1524,17 @@ function matchFace(descriptor){
 /* ---------- 活體檢測（新增）：用眨眼判斷是不是真人，防止拿照片／手機螢幕冒充刷臉 ----------
  * 原理：用臉部特徵點算「眼睛長寬比」(Eye Aspect Ratio, EAR)，眼睛張開時這個值比較大，
  * 閉起來（眨眼）的瞬間會明顯變小再回升。靜態照片、螢幕上的照片這個值幾乎不會變化，
- * 藉此跟真人臉區分開來。這只能擋「拿照片刷臉」，擋不住「播放一段有眨眼的影片」這種更刁鑽的作弊法。 */
-var EAR_BLINK=0.21, EAR_OPEN=0.25;   // 低於 BLINK 視為閉眼、回升到 OPEN 以上才算真的張開，中間留一點緩衝避免抖動誤判
-var LIVENESS_WINDOW_MS=5000;         // 這段時間內只要抓到一次眨眼就算通過，時間到了追蹤重置、要重新確認
+ * 藉此跟真人臉區分開來。這只能擋「拿照片刷臉」，擋不住「播放一段有眨眼的影片」這種更刁鑽的作弊法，
+ * 也不是完美的防偽——手拿照片如果刻意晃動，理論上仍有機會被雜訊誤判成眨眼，只是機率大幅降低。
+ *
+ * 這裡刻意收緊了兩層，避免原本「數值曾經跌破再回升過一次就算數」太容易被偵測雜訊誤觸發：
+ * 1. 眨眼要「快」：眼睛長寬比要在短短幾次偵測內完成「睜開→閉起→睜開」，拖太久（例如緩慢的
+ *    雜訊漂移）不算數，因為真正的眨眼本來就只有一瞬間。
+ * 2. 要求兩次「乾淨」的眨眼才算通過，不是一次就過，降低單一雜訊事件湊巧誤判的機率。 */
+var EAR_BLINK=0.19, EAR_OPEN=0.27;      // 拉大兩個門檻之間的間距，一般偵測雜訊比較不容易同時跨過這麼寬的範圍
+var BLINK_MAX_CLOSED_TICKS=3;           // 「閉眼」狀態最多維持這幾次偵測（約 1~1.5 秒），拖更久就不算是眨眼
+var BLINK_REQUIRED_COUNT=2;             // 要抓到這麼多次乾淨的眨眼才算通過活體檢測
+var LIVENESS_WINDOW_MS=8000;            // 觀察窗拉長，讓「要眨兩次」在正常情況下還是能從容完成
 function dist_(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
 function eyeAspectRatio_(eye){
   var A=dist_(eye[1],eye[5]), B=dist_(eye[2],eye[4]), C=dist_(eye[0],eye[3]);
@@ -1544,14 +1552,21 @@ function detectFaces(){
         if(seat==null) return;
         var tr=faceTracks[seat];
         if(!tr || now-tr.last>LIVENESS_WINDOW_MS){
-          tr=faceTracks[seat]={hits:0,last:now,eyeState:'open',blinkConfirmed:!S.livenessCheck};
+          tr=faceTracks[seat]={hits:0,last:now,eyeState:'open',closedTicks:0,blinkCount:0,blinkConfirmed:!S.livenessCheck};
         }
         tr.hits++; tr.last=now; tr.box=res.detection.box;
 
         if(S.livenessCheck && !tr.blinkConfirmed){
           var ear=(eyeAspectRatio_(res.landmarks.getLeftEye())+eyeAspectRatio_(res.landmarks.getRightEye()))/2;
-          if(ear<EAR_BLINK) tr.eyeState='closed';
-          else if(ear>=EAR_OPEN){ if(tr.eyeState==='closed') tr.blinkConfirmed=true; tr.eyeState='open'; }
+          if(ear<EAR_BLINK){
+            tr.eyeState='closed'; tr.closedTicks++;
+          } else if(ear>=EAR_OPEN){
+            if(tr.eyeState==='closed' && tr.closedTicks>0 && tr.closedTicks<=BLINK_MAX_CLOSED_TICKS){
+              tr.blinkCount++;
+              if(tr.blinkCount>=BLINK_REQUIRED_COUNT) tr.blinkConfirmed=true;
+            }
+            tr.eyeState='open'; tr.closedTicks=0;
+          }
         }
 
         if(tr.hits>=2 && tr.blinkConfirmed && !S.marks[seat]) checkIn(seat,'face');
@@ -1710,7 +1725,7 @@ function draw(now){
     var x=Math.min(p0[0],p1[0]), y=Math.min(p0[1],p1[1]), w=Math.abs(p1[0]-p0[0]), h=Math.abs(p1[1]-p0[1]);
     octx.lineWidth=3; octx.strokeStyle=col; octx.strokeRect(x,y,w,h);
     if(!st) return;
-    var label = pendingBlink ? (pad(st.seat)+st.name+'　請眨眼確認') : (pad(st.seat)+st.name+(m?'　'+statusName(m.status):''));
+    var label = pendingBlink ? (pad(st.seat)+st.name+'　請眨眼確認（'+(tr.blinkCount||0)+'/'+BLINK_REQUIRED_COUNT+'）') : (pad(st.seat)+st.name+(m?'　'+statusName(m.status):''));
     octx.font='700 16px "Noto Sans TC", system-ui, sans-serif';
     var tw2=octx.measureText(label).width, bw2=tw2+20, bh2=28;
     octx.fillStyle='rgba(18,20,26,.86)';
