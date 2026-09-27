@@ -369,6 +369,24 @@ var GUIDE_CENTER_TOL=0.32;                    // 臉框中心偏離引導框中�
 var GUIDE_SCORE_MIN=0.72;                     // 偵測信心值門檻，太低視為可能有遮蔽物或光線不足
 var GUIDE_ASPECT_MIN=0.58, GUIDE_ASPECT_MAX=1.05; // 臉框寬高比，超出範圍視為角度異常／疑似遮蔽
 
+/* 註冊時的活體檢測（新增）：跟點名鏡頭用同一套原理，但用在註冊階段——
+   要求整個拍攝過程中至少偵測到一次眨眼、而且臉真的有依提示轉動過，
+   防止有人拿照片（甚至傾斜著模擬轉頭）冒充本人完成註冊。這個檢查只在拍完
+   4 張之後統一驗證一次，不會拖慢拍攝過程本身。 */
+var EAR_BLINK=0.21, EAR_OPEN=0.25;              // 眼睛長寬比：低於 BLINK 視為閉眼、回升到 OPEN 以上才算張開
+var HEAD_TURN_MIN_RANGE=0.12;                   // 整個拍攝過程中，鼻子相對眼睛的水平位移至少要有這麼大的變化範圍
+function dist_(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+function eyeAspectRatio_(eye){
+  var A=dist_(eye[1],eye[5]), B=dist_(eye[2],eye[4]), C=dist_(eye[0],eye[3]);
+  return C ? (A+B)/(2*C) : 0;
+}
+function noseOffsetFrom_(lm){
+  var le=lm.getLeftEye(), re=lm.getRightEye(), nose=lm.getNose();
+  var leC={x:(le[0].x+le[3].x)/2}, reC={x:(re[0].x+re[3].x)/2};
+  var eyeMidX=(leC.x+reC.x)/2, eyeDist=Math.abs(reC.x-leC.x)||1;
+  return (nose[3].x-eyeMidX)/eyeDist;
+}
+
 function renderDots(){
   var box=$('dots'); box.innerHTML='';
   for(var i=0;i<Reg.needed;i++){ var d=document.createElement('i'); if(i<Reg.captured) d.className='on'; box.appendChild(d); }
@@ -418,6 +436,7 @@ function evalGuide(faces, vw, vh){
 
 function enterStep3(){
   Reg.descriptors=[]; Reg.captured=0; renderDots(); lastSpoken='';
+  Reg.blinkSeen=false; Reg.eyeState='open'; Reg.noseOffsets=[];
   $('camHint').textContent='準備鏡頭中…'; $('status3').textContent='';
   showStep(3);
   openCamera().then(function(){
@@ -430,8 +449,9 @@ function enterStep3(){
     startAutoCapture();
   }).catch(function(e){ $('camHint').textContent='初始化失敗'; $('status3').textContent=(e&&e.message||e); });
 }
-function startAutoCapture(){ regCapturing=true; regStableCount=0; regLastTick=0; regCaptureRAF=requestAnimationFrame(captureTick); }
-function stopAutoCapture(){ regCapturing=false; if(regCaptureRAF) cancelAnimationFrame(regCaptureRAF); }
+var regPaused=false;
+function startAutoCapture(){ regCapturing=true; regPaused=false; regStableCount=0; regLastTick=0; regCaptureRAF=requestAnimationFrame(captureTick); }
+function stopAutoCapture(){ regCapturing=false; regPaused=false; if(regCaptureRAF) cancelAnimationFrame(regCaptureRAF); }
 function captureTick(t){
   if(!regCapturing) return;
   regCaptureRAF=requestAnimationFrame(captureTick);
@@ -443,6 +463,17 @@ function captureTick(t){
     .withFaceLandmarks().withFaceDescriptors()
     .then(function(faces){
       regBusyDetect=false;
+      // 活體檢測：不管這一格準不準備拍照、甚至在兩張照片中間的暫停時間也持續記錄，
+      // 讓整個註冊過程（不只是快門那一瞬間）都有機會捕捉到眨眼／轉頭，降低正常學生被誤判重來的機率。
+      if(faces.length===1){
+        var lm0=faces[0].landmarks;
+        var ear=(eyeAspectRatio_(lm0.getLeftEye())+eyeAspectRatio_(lm0.getRightEye()))/2;
+        if(ear<EAR_BLINK) Reg.eyeState='closed';
+        else if(ear>=EAR_OPEN){ if(Reg.eyeState==='closed') Reg.blinkSeen=true; Reg.eyeState='open'; }
+        Reg.noseOffsets.push(noseOffsetFrom_(lm0));
+        if(Reg.noseOffsets.length>80) Reg.noseOffsets.shift();
+      }
+      if(regPaused) return; // 暫停等待轉頭的這段時間，只做活體追蹤，不嘗試拍照
       var g=evalGuide(faces, vw, vh);
       $('camBox').classList.toggle('guide-ok', g.ok);
       $('camBox').classList.toggle('guide-bad', !g.ok);
@@ -455,20 +486,32 @@ function captureTick(t){
       Reg.captured++; renderDots(); flashCam();
       if(Reg.captured>=Reg.needed){
         stopAutoCapture();
+        var turnRange = Reg.noseOffsets.length ? (Math.max.apply(null,Reg.noseOffsets)-Math.min.apply(null,Reg.noseOffsets)) : 0;
+        var reasons=[];
+        if(!Reg.blinkSeen) reasons.push('沒有偵測到眨眼');
+        if(turnRange<HEAD_TURN_MIN_RANGE) reasons.push('沒有偵測到明顯轉頭');
+        if(reasons.length){
+          $('camBox').classList.remove('guide-ok','guide-bad');
+          $('camHint').textContent='活體檢測未通過（'+reasons.join('、')+'）';
+          $('status3').textContent='請按「全部重拍」再試一次：過程中請自然眨眼、並確實依提示轉動臉部，不要用照片或影片代替真人。';
+          speak('活體檢測沒有通過，請重新掃描');
+          return;
+        }
         $('camHint').textContent='拍攝完成，送出註冊中…'; $('camBox').classList.remove('guide-ok','guide-bad');
         speak('拍攝完成');
         submitEnroll();
       } else {
-        // 拍完一張後先暫停偵測一段時間，給學生時間轉頭調整角度，
-        // 不然原本偵測是持續在跑，臉一穩定下來馬上就會拍下一張，根本來不及轉頭。
-        stopAutoCapture();
+        // 拍完一張後暫停「嘗試拍照」一段時間，給學生時間轉頭調整角度，
+        // 但偵測迴圈本身不停（活體追蹤仍持續進行），不然原本每格都在搶拍，
+        // 臉一穩定下來馬上就會拍下一張，根本來不及轉頭。
+        regPaused=true;
         $('camHint').textContent=HINTS[Reg.captured];
         $('status3').textContent='請依提示調整角度，'+(CAPTURE_PAUSE_MS/1000)+' 秒後自動繼續拍攝…';
         $('camBox').classList.remove('guide-ok','guide-bad');
         lastSpoken=''; speak(HINTS[Reg.captured]);
         setTimeout(function(){
           $('status3').textContent='';
-          startAutoCapture();
+          regStableCount=0; regPaused=false;
         }, CAPTURE_PAUSE_MS);
       }
     }).catch(function(){ regBusyDetect=false; });
