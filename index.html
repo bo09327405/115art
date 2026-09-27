@@ -371,10 +371,6 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
           <div class="tt"><b>人臉辨識點名</b><span>鏡頭同時偵測 Plickers 卡片與已註冊學生的臉，抓到哪個就記錄哪個</span></div>
           <button type="button" class="switch" id="faceSwitch" role="switch" aria-checked="false"></button>
         </div>
-        <div class="toggle">
-          <div class="tt"><b>刷臉活體檢測</b><span>要求偵測到眨眼才算數，防止拿照片／手機螢幕冒充刷臉，但點名速度會變慢幾秒</span></div>
-          <button type="button" class="switch" id="livenessSwitch" role="switch" aria-checked="true"></button>
-        </div>
       </div>
     </div>
 
@@ -423,7 +419,6 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
       <button class="btn" id="flipBtn" aria-label="切換鏡頭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v12H4z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/></svg><span class="t">切換鏡頭</span></button>
       <button class="btn" id="soundBtn" aria-pressed="true" aria-label="提示音"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h4l5 4V6L8 10z"/><path id="wave" d="M16 9a4 4 0 0 1 0 6"/></svg><span class="t">提示音</span></button>
       <button class="btn" id="groupPhotoBtn" aria-label="全班合照辨識" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3.2 3.1-5.5 7-5.5s7 2.3 7 5.5"/><circle cx="17.3" cy="9" r="2.2"/><path d="M15.8 13.1c2.5.4 4.2 2.1 4.2 4.4"/></svg><span class="t">全班合照</span></button>
-      <button class="btn" id="livenessBtn" aria-pressed="true" aria-label="刷臉活體檢測" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><span class="t">活體檢測</span></button>
       <div class="sync" id="sync" data-st="ok"><i></i><span id="syncText">已同步</span></div>
       <button class="btn end" id="endBtn"><span class="t">結束點名</span></button>
     </div>
@@ -899,7 +894,6 @@ var S = {
   queue:[], inflight:false, running:false, sound:true,
   bonusMode:false, // 手動加分：點座位改為顯示加減分按鈕
   faceEnabled:false, // 人臉辨識點名開關（新增）
-  livenessCheck:true, // 刷臉活體檢測開關（新增）：要求偵測到眨眼才算數
   faceRoster:{},      // seat → 已註冊的臉部特徵值陣列（開始點名時才會抓）
   faceCounts:{},      // sheet → 該班已完成人臉註冊的人數（僅供顯示）
   pw:''            // 進入密碼，通過驗證後才會有值
@@ -1381,7 +1375,7 @@ $('regDlg').addEventListener('click', function(ev){ if(ev.target===$('regDlg')) 
 $('regDlg').addEventListener('close', function(){ regStopAutoCapture(); regStopCamera(); try{speechSynthesis.cancel();}catch(e){} });
 
 function persist(){
-  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled, livenessCheck:S.livenessCheck}).catch(function(){});
+  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled}).catch(function(){});
 }
 
 /* ---------- 人臉辨識開關 ---------- */
@@ -1395,14 +1389,6 @@ function setFaceEnabled(v, silent){
   }
   if(!silent) persist();
 }
-function setLivenessCheck(v, silent){
-  S.livenessCheck=!!v;
-  $('livenessSwitch').setAttribute('aria-checked', String(S.livenessCheck));
-  $('livenessBtn').setAttribute('aria-pressed', String(S.livenessCheck));
-  if(!silent) persist();
-}
-$('livenessSwitch').onclick=function(){ setLivenessCheck(!S.livenessCheck); };
-$('livenessBtn').onclick=function(){ setLivenessCheck(!S.livenessCheck); toast(S.livenessCheck?'活體檢測已開啟':'活體檢測已關閉'); };
 $('faceSwitch').onclick=function(){ setFaceEnabled(!S.faceEnabled); };
 
 /* ---------- 點名判定 ---------- */
@@ -1521,25 +1507,6 @@ function matchFace(descriptor){
   });
   return bestSeat;
 }
-/* ---------- 活體檢測（新增）：用眨眼判斷是不是真人，防止拿照片／手機螢幕冒充刷臉 ----------
- * 原理：用臉部特徵點算「眼睛長寬比」(Eye Aspect Ratio, EAR)，眼睛張開時這個值比較大，
- * 閉起來（眨眼）的瞬間會明顯變小再回升。靜態照片、螢幕上的照片這個值幾乎不會變化，
- * 藉此跟真人臉區分開來。這只能擋「拿照片刷臉」，擋不住「播放一段有眨眼的影片」這種更刁鑽的作弊法，
- * 也不是完美的防偽——手拿照片如果刻意晃動，理論上仍有機會被雜訊誤判成眨眼，只是機率大幅降低。
- *
- * 這裡刻意收緊了兩層，避免原本「數值曾經跌破再回升過一次就算數」太容易被偵測雜訊誤觸發：
- * 1. 眨眼要「快」：眼睛長寬比要在短短幾次偵測內完成「睜開→閉起→睜開」，拖太久（例如緩慢的
- *    雜訊漂移）不算數，因為真正的眨眼本來就只有一瞬間。
- * 2. 要求兩次「乾淨」的眨眼才算通過，不是一次就過，降低單一雜訊事件湊巧誤判的機率。 */
-var EAR_BLINK=0.19, EAR_OPEN=0.27;      // 拉大兩個門檻之間的間距，一般偵測雜訊比較不容易同時跨過這麼寬的範圍
-var BLINK_MAX_CLOSED_TICKS=3;           // 「閉眼」狀態最多維持這幾次偵測（約 1~1.5 秒），拖更久就不算是眨眼
-var BLINK_REQUIRED_COUNT=2;             // 要抓到這麼多次乾淨的眨眼才算通過活體檢測
-var LIVENESS_WINDOW_MS=8000;            // 觀察窗拉長，讓「要眨兩次」在正常情況下還是能從容完成
-function dist_(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
-function eyeAspectRatio_(eye){
-  var A=dist_(eye[1],eye[5]), B=dist_(eye[2],eye[4]), C=dist_(eye[0],eye[3]);
-  return C ? (A+B)/(2*C) : 0;
-}
 function detectFaces(){
   // 重用 PlickersVision 已經畫在 proc 這個 canvas 上的當下畫面，不用另外再截一次圖，
   // 座標系統也因此跟卡片框一樣可以直接用同一個 mapper() 換算成螢幕座標。
@@ -1551,25 +1518,9 @@ function detectFaces(){
         var seat=matchFace(res.descriptor);
         if(seat==null) return;
         var tr=faceTracks[seat];
-        if(!tr || now-tr.last>LIVENESS_WINDOW_MS){
-          tr=faceTracks[seat]={hits:0,last:now,eyeState:'open',closedTicks:0,blinkCount:0,blinkConfirmed:!S.livenessCheck};
-        }
+        if(!tr || now-tr.last>2200){ tr=faceTracks[seat]={hits:0,last:now}; }
         tr.hits++; tr.last=now; tr.box=res.detection.box;
-
-        if(S.livenessCheck && !tr.blinkConfirmed){
-          var ear=(eyeAspectRatio_(res.landmarks.getLeftEye())+eyeAspectRatio_(res.landmarks.getRightEye()))/2;
-          if(ear<EAR_BLINK){
-            tr.eyeState='closed'; tr.closedTicks++;
-          } else if(ear>=EAR_OPEN){
-            if(tr.eyeState==='closed' && tr.closedTicks>0 && tr.closedTicks<=BLINK_MAX_CLOSED_TICKS){
-              tr.blinkCount++;
-              if(tr.blinkCount>=BLINK_REQUIRED_COUNT) tr.blinkConfirmed=true;
-            }
-            tr.eyeState='open'; tr.closedTicks=0;
-          }
-        }
-
-        if(tr.hits>=2 && tr.blinkConfirmed && !S.marks[seat]) checkIn(seat,'face');
+        if(tr.hits>=2 && !S.marks[seat]) checkIn(seat,'face');
       });
     });
 }
@@ -1720,12 +1671,11 @@ function draw(now){
     if(!tr.box) return;
     var b=tr.box, p0=M([b.x,b.y]), p1=M([b.x+b.width,b.y+b.height]);
     var st=studentBySeat(+seat), m=st&&S.marks[st.seat];
-    var pendingBlink = S.livenessCheck && !tr.blinkConfirmed && !m;
-    var col = m ? statusColor(m.status) : (pendingBlink ? '#E5A000' : '#4AA3FF');
+    var col = m ? statusColor(m.status) : '#4AA3FF';
     var x=Math.min(p0[0],p1[0]), y=Math.min(p0[1],p1[1]), w=Math.abs(p1[0]-p0[0]), h=Math.abs(p1[1]-p0[1]);
     octx.lineWidth=3; octx.strokeStyle=col; octx.strokeRect(x,y,w,h);
     if(!st) return;
-    var label = pendingBlink ? (pad(st.seat)+st.name+'　請眨眼確認（'+(tr.blinkCount||0)+'/'+BLINK_REQUIRED_COUNT+'）') : (pad(st.seat)+st.name+(m?'　'+statusName(m.status):''));
+    var label=pad(st.seat)+st.name+(m?'　'+statusName(m.status):'');
     octx.font='700 16px "Noto Sans TC", system-ui, sans-serif';
     var tw2=octx.measureText(label).width, bw2=tw2+20, bh2=28;
     octx.fillStyle='rgba(18,20,26,.86)';
@@ -1834,7 +1784,6 @@ function start(){
   // 人臉辨識（新增）：跟上面點名流程平行進行，不會卡住開始點名的速度；
   // 模型或資料還沒準備好之前，鏡頭已經先開了，準備好後這堂課後面偵測到的臉才會生效。
   $('groupPhotoBtn').style.display = S.faceEnabled ? '' : 'none';
-  $('livenessBtn').style.display = S.faceEnabled ? '' : 'none';
   if(S.faceEnabled){
     ensureFaceModels().catch(function(e){ toast('人臉辨識模型載入失敗，本次僅能用卡片點名：'+(e&&e.message||e), 5500); });
     call('faceData', S.sheet).then(function(list){
@@ -1910,7 +1859,6 @@ function applyBootstrap(b){
   if(s.bonusMode){ S.bonusMode=true; $('bonusSwitch').setAttribute('aria-checked','true'); }
   S.faceCounts = b.faceCounts || {};
   if(s.faceEnabled) setFaceEnabled(true, true);
-  setLivenessCheck(s.livenessCheck!==false, true); // 沒存過設定時預設開啟
   if(s.sheet && S.classes.some(function(c){return c.sheet===s.sheet;})) S.sheet=s.sheet;
   renderRule(); renderClasses();
   if(S.cam!=='env'&&S.cam!=='user'){ var o=document.createElement('option'); o.value=S.cam; o.textContent='上次使用的攝影機'; $('camSel').appendChild(o); }
