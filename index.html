@@ -364,10 +364,6 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
       <span class="lab">進階選項</span>
       <div class="togglebox">
         <div class="toggle">
-          <div class="tt"><b>即時輸入</b><span>開啟：每次刷卡／刷臉立即寫入試算表。關閉：先累積，等按下「結束點名」才一次送出</span></div>
-          <button type="button" class="switch" id="instantSwitch" role="switch" aria-checked="false"></button>
-        </div>
-        <div class="toggle">
           <div class="tt"><b>手動加分</b><span>點座位顯示加減分按鈕，取代點名修改選單</span></div>
           <button type="button" class="switch" id="bonusSwitch" role="switch" aria-checked="false"></button>
         </div>
@@ -426,7 +422,6 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
     <div class="bar">
       <button class="btn" id="flipBtn" aria-label="切換鏡頭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v12H4z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/></svg><span class="t">切換鏡頭</span></button>
       <button class="btn" id="soundBtn" aria-pressed="true" aria-label="提示音"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h4l5 4V6L8 10z"/><path id="wave" d="M16 9a4 4 0 0 1 0 6"/></svg><span class="t">提示音</span></button>
-      <button class="btn" id="instantBtn" aria-pressed="false" aria-label="即時輸入"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg><span class="t">即時輸入</span></button>
       <button class="btn" id="groupPhotoBtn" aria-label="全班合照辨識" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3.2 3.1-5.5 7-5.5s7 2.3 7 5.5"/><circle cx="17.3" cy="9" r="2.2"/><path d="M15.8 13.1c2.5.4 4.2 2.1 4.2 4.4"/></svg><span class="t">全班合照</span></button>
       <button class="btn" id="livenessBtn" aria-pressed="true" aria-label="刷臉活體檢測" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><span class="t">活體檢測</span></button>
       <div class="sync" id="sync" data-st="ok"><i></i><span id="syncText">已同步</span></div>
@@ -902,7 +897,6 @@ var S = {
   marks:{},        // seat → { status, time, pending }
   bonus:{},        // seat → 當天手動加分累計（跟出缺勤狀態分開存）
   queue:[], inflight:false, running:false, sound:true,
-  instant:false,   // 即時輸入：每次刷卡立即寫入，不等批次
   bonusMode:false, // 手動加分：點座位改為顯示加減分按鈕
   faceEnabled:false, // 人臉辨識點名開關（新增）
   livenessCheck:true, // 刷臉活體檢測開關（新增）：要求偵測到眨眼才算數
@@ -1135,7 +1129,7 @@ document.addEventListener('click', closeBonus);
  * ==================================================================== */
 var CONSENT_VERSION = 'v1'; // 要跟 Code.gs 裡的 CONSENT_VERSION 對應；改了同意書文字記得兩邊都更新
 var CONSENT_TEXT =
-'【表演藝術課-臉部辨識授權同意書】\n\n'+
+'人臉辨識點名同意書（範本，請授課教師／學校依實際規定調整後使用，本文字僅供參考，非正式法律意見）\n\n'+
 '為提升課堂點名效率，授課教師擬於課堂點名時，透過鏡頭拍攝影像並即時擷取臉部特徵數值（不會儲存完整照片，只會儲存無法還原成影像的一組數字），用來自動比對出席學生身份。\n\n'+
 '1. 蒐集目的：課堂出缺勤點名紀錄之建立與查核。\n'+
 '2. 蒐集項目：臉部特徵數值（並非照片本身）、班級、座號、姓名、註冊時間。\n'+
@@ -1300,7 +1294,6 @@ function regEvalGuide(faces, vw, vh){
 }
 function regEnterStep3(){
   Reg.descriptors=[]; Reg.captured=0; renderRegDots(); regLastSpoken='';
-  Reg.blinkSeen=false; Reg.eyeState='open'; Reg.noseOffsets=[];
   $('regHint').textContent='準備鏡頭中…'; $('regStatus3').textContent='';
   regShowStep(3);
   regOpenCamera().then(function(){
@@ -1313,9 +1306,8 @@ function regEnterStep3(){
     regStartAutoCapture();
   }).catch(function(e){ $('regHint').textContent='初始化失敗'; $('regStatus3').textContent=(e&&e.message||e); });
 }
-var regDlgPaused=false;
-function regStartAutoCapture(){ regCapturing=true; regDlgPaused=false; regStableCount=0; regLastTick=0; regCaptureRAF=requestAnimationFrame(regCaptureTick); }
-function regStopAutoCapture(){ regCapturing=false; regDlgPaused=false; if(regCaptureRAF) cancelAnimationFrame(regCaptureRAF); }
+function regStartAutoCapture(){ regCapturing=true; regStableCount=0; regLastTick=0; regCaptureRAF=requestAnimationFrame(regCaptureTick); }
+function regStopAutoCapture(){ regCapturing=false; if(regCaptureRAF) cancelAnimationFrame(regCaptureRAF); }
 function regCaptureTick(t){
   if(!regCapturing) return;
   regCaptureRAF=requestAnimationFrame(regCaptureTick);
@@ -1327,17 +1319,6 @@ function regCaptureTick(t){
     .withFaceLandmarks().withFaceDescriptors()
     .then(function(faces){
       regBusyDetect=false;
-      // 活體檢測（新增）：不管這一格準不準備拍照、甚至在兩張照片中間的暫停時間也持續記錄，
-      // 讓整個註冊過程都有機會捕捉到眨眼／轉頭，降低正常學生被誤判重來的機率。
-      if(faces.length===1){
-        var lm0=faces[0].landmarks;
-        var ear=(eyeAspectRatio_(lm0.getLeftEye())+eyeAspectRatio_(lm0.getRightEye()))/2;
-        if(ear<EAR_BLINK) Reg.eyeState='closed';
-        else if(ear>=EAR_OPEN){ if(Reg.eyeState==='closed') Reg.blinkSeen=true; Reg.eyeState='open'; }
-        Reg.noseOffsets.push(noseOffsetFrom_(lm0));
-        if(Reg.noseOffsets.length>80) Reg.noseOffsets.shift();
-      }
-      if(regDlgPaused) return; // 暫停等待轉頭的這段時間，只做活體追蹤，不嘗試拍照
       var g=regEvalGuide(faces, vw, vh);
       $('regCamBox').classList.toggle('guide-ok', g.ok);
       $('regCamBox').classList.toggle('guide-bad', !g.ok);
@@ -1350,32 +1331,20 @@ function regCaptureTick(t){
       Reg.captured++; renderRegDots(); regFlashCam();
       if(Reg.captured>=Reg.needed){
         regStopAutoCapture();
-        var turnRange = Reg.noseOffsets.length ? (Math.max.apply(null,Reg.noseOffsets)-Math.min.apply(null,Reg.noseOffsets)) : 0;
-        var reasons=[];
-        if(!Reg.blinkSeen) reasons.push('沒有偵測到眨眼');
-        if(turnRange<HEAD_TURN_MIN_RANGE) reasons.push('沒有偵測到明顯轉頭');
-        if(reasons.length){
-          $('regCamBox').classList.remove('guide-ok','guide-bad');
-          $('regHint').textContent='活體檢測未通過（'+reasons.join('、')+'）';
-          $('regStatus3').textContent='請按「重新掃描」再試一次：過程中請自然眨眼、並確實依提示轉動臉部，不要用照片或影片代替真人。';
-          regSpeak('活體檢測沒有通過，請重新掃描');
-          return;
-        }
         $('regHint').textContent='拍攝完成，送出註冊中…'; $('regCamBox').classList.remove('guide-ok','guide-bad');
         regSpeak('拍攝完成');
         regSubmitEnroll();
       } else {
-        // 拍完一張後暫停「嘗試拍照」一段時間，給學生時間轉頭調整角度，
-        // 但偵測迴圈本身不停（活體追蹤仍持續進行），不然原本每格都在搶拍，
-        // 臉一穩定下來馬上就會拍下一張，根本來不及轉頭。
-        regDlgPaused=true;
+        // 拍完一張後先暫停偵測一段時間，給學生時間轉頭調整角度，
+        // 不然原本偵測是持續在跑，臉一穩定下來馬上就會拍下一張，根本來不及轉頭。
+        regStopAutoCapture();
         $('regHint').textContent=REG_HINTS[Reg.captured];
         $('regStatus3').textContent='請依提示調整角度，'+(REG_CAPTURE_PAUSE_MS/1000)+' 秒後自動繼續拍攝…';
         $('regCamBox').classList.remove('guide-ok','guide-bad');
         regLastSpoken=''; regSpeak(REG_HINTS[Reg.captured]);
         setTimeout(function(){
           $('regStatus3').textContent='';
-          regStableCount=0; regDlgPaused=false;
+          regStartAutoCapture();
         }, REG_CAPTURE_PAUSE_MS);
       }
     }).catch(function(){ regBusyDetect=false; });
@@ -1412,7 +1381,7 @@ $('regDlg').addEventListener('click', function(ev){ if(ev.target===$('regDlg')) 
 $('regDlg').addEventListener('close', function(){ regStopAutoCapture(); regStopCamera(); try{speechSynthesis.cancel();}catch(e){} });
 
 function persist(){
-  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, instant:S.instant, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled, livenessCheck:S.livenessCheck}).catch(function(){});
+  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled, livenessCheck:S.livenessCheck}).catch(function(){});
 }
 
 /* ---------- 人臉辨識開關 ---------- */
@@ -1563,14 +1532,6 @@ function eyeAspectRatio_(eye){
   var A=dist_(eye[1],eye[5]), B=dist_(eye[2],eye[4]), C=dist_(eye[0],eye[3]);
   return C ? (A+B)/(2*C) : 0;
 }
-// 註冊流程額外用來檢查「有沒有真的轉頭」的輔助函式（點名的即時偵測不需要這個）
-var HEAD_TURN_MIN_RANGE=0.12; // 整個拍攝過程中，鼻子相對眼睛的水平位移至少要有這麼大的變化範圍
-function noseOffsetFrom_(lm){
-  var le=lm.getLeftEye(), re=lm.getRightEye(), nose=lm.getNose();
-  var leC={x:(le[0].x+le[3].x)/2}, reC={x:(re[0].x+re[3].x)/2};
-  var eyeMidX=(leC.x+reC.x)/2, eyeDist=Math.abs(reC.x-leC.x)||1;
-  return (nose[3].x-eyeMidX)/eyeDist;
-}
 function detectFaces(){
   // 重用 PlickersVision 已經畫在 proc 這個 canvas 上的當下畫面，不用另外再截一次圖，
   // 座標系統也因此跟卡片框一樣可以直接用同一個 mapper() 換算成螢幕座標。
@@ -1700,7 +1661,7 @@ function checkIn(card, method){
   S.queue.push({row:st.row,seat:st.seat,status:status,time:time,card:method==='face'?'':card,method:method||'card'});
   feed(st,status,time,method); beep(status); renderStrip(); renderTally();
   if(navigator.vibrate) navigator.vibrate(status==='1'?30:[30,60,30]);
-  if(S.instant) flush(); // 即時輸入：不等 1.2 秒批次，立刻寫入試算表
+  flush(); // 固定行為：每次刷卡／刷臉立刻寫入試算表，不再有「批次同步」的選項
 }
 
 function draw(now){
@@ -1817,16 +1778,12 @@ function flush(){
     setSync('err','寫入失敗，稍後重試');
   });
 }
-/* 即時輸入開著：每次刷卡／刷臉都會在 checkIn() 裡馬上呼叫 flush()，這裡的計時器只是
-   萬一那次送出失敗時的重試保險，所以還是保留一個短間隔（1.2 秒）。
-   即時輸入關著：完全不主動同步，佇列只會在按下「結束點名」時（stop() 裡）一次送出，
-   這樣「關閉＝等全部刷完、確認後再一次寫入試算表」才會是真的成立，不是原本那種
-   只是拉長到 5 秒還是照樣自動送出的假關閉。
-   （手動加分永遠不走這個佇列，adjustBonus 每次點擊都直接送出，不受這個開關影響。） */
+/* 每次刷卡／刷臉都會在 checkIn() 裡馬上呼叫 flush()；這裡的計時器只是萬一那次
+   送出失敗時的重試保險（例如網路瞬斷），固定每 1.2 秒巡一次，不再有開關可以關掉它。
+   （手動加分永遠不走這個佇列，adjustBonus 每次點擊都直接送出，不受這裡影響。） */
 var flushTimer=null;
 function scheduleFlush(){
   if(flushTimer){ clearTimeout(flushTimer); flushTimer=null; }
-  if(!S.instant) return; // 關閉時不排程任何自動同步，靜靜讓佇列累積，等 stop() 裡的 flush() 一次送出
   flushTimer=setTimeout(function(){ flush(); scheduleFlush(); }, 1200);
 }
 scheduleFlush();
@@ -1922,16 +1879,6 @@ $('panelToggle').onclick=function(){
   try{ localStorage.setItem('rollcall_panel', collapsed?'1':'0'); }catch(e){}
 };
 try{ if(localStorage.getItem('rollcall_panel')==='1'){ $('setup').classList.add('collapsed'); $('panelToggle').setAttribute('aria-expanded','false'); } }catch(e){}
-function setInstant(v){
-  S.instant=!!v;
-  $('instantSwitch').setAttribute('aria-checked', String(S.instant));
-  $('instantBtn').setAttribute('aria-pressed', String(S.instant));
-  scheduleFlush();
-  if(S.instant) flush(); // 切成開啟的當下，把佇列裡已經累積的也一併立刻送出，不用等下一次刷卡
-  persist();
-}
-$('instantSwitch').onclick=function(){ setInstant(!S.instant); };
-$('instantBtn').onclick=function(){ setInstant(!S.instant); };
 $('bonusSwitch').onclick=function(){ S.bonusMode=!S.bonusMode; this.setAttribute('aria-checked',S.bonusMode); closePop(); closeBonus(); renderGrid(); persist(); };
 
 /* ---------- 啟動 ---------- */
@@ -1945,7 +1892,6 @@ function applyBootstrap(b){
   if(s.late){ S.late=s.late; $('late').value=s.late; }
   if(typeof s.absentAfter==='number') S.absentAfter=s.absentAfter;
   if(s.cam){ S.cam=s.cam; }
-  if(s.instant){ S.instant=true; $('instantSwitch').setAttribute('aria-checked','true'); $('instantBtn').setAttribute('aria-pressed','true'); scheduleFlush(); }
   if(s.bonusMode){ S.bonusMode=true; $('bonusSwitch').setAttribute('aria-checked','true'); }
   S.faceCounts = b.faceCounts || {};
   if(s.faceEnabled) setFaceEnabled(true, true);
