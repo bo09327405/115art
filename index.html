@@ -774,7 +774,7 @@ var IS_DEMO = !API_URL || API_URL.indexOf('PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE'
  * ==================================================================== */
 var FACE_LIB_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.min.js';
 var FACE_MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model';
-var FACE_MATCH_THRESHOLD = 0.5; // 距離門檻，越小越嚴格；face-api 官方範例常用 0.5~0.6
+var FACE_MATCH_THRESHOLD = 0.42; // 與「平均臉」的距離門檻，越小越嚴格（原本 0.5 太寬鬆，會把別人認成已註冊學生）
 // TinyFaceDetector 內部會把畫面「硬塞縮小」成 inputSize×inputSize 再去偵測，
 // 原本用 224 對近距離夠用，但距離一拉遠、臉在畫面裡本來就小，縮到 224 之後幾乎沒細節可看，
 // 就會偵測不到。調大 inputSize 能讓遠處的小臉保留比較多細節，代價是每次偵測稍微慢一點，
@@ -895,6 +895,7 @@ var S = {
   bonusMode:false, // 手動加分：點座位改為顯示加減分按鈕
   faceEnabled:false, // 人臉辨識點名開關（新增）
   faceRoster:{},      // seat → 已註冊的臉部特徵值陣列（開始點名時才會抓）
+  faceCentroids:{},   // seat → 該學生註冊特徵值的平均（「平均臉」，比對時用）
   faceCounts:{},      // sheet → 該班已完成人臉註冊的人數（僅供顯示）
   pw:''            // 進入密碼，通過驗證後才會有值
 };
@@ -1496,16 +1497,55 @@ function loop(t){
   draw(performance.now());
 }
 
-/* ---------- 人臉辨識偵測＋比對（新增） ---------- */
-function matchFace(descriptor){
-  var bestSeat=null, bestDist=FACE_MATCH_THRESHOLD;
-  Object.keys(S.faceRoster||{}).forEach(function(seat){
-    (S.faceRoster[seat]||[]).forEach(function(ref){
-      var d=faceapi.euclideanDistance(descriptor, ref);
-      if(d<bestDist){ bestDist=d; bestSeat=+seat; }
-    });
+/* ---------- 人臉辨識偵測＋比對（新增） ----------
+ * 防誤認（修正「別人的臉被認成已註冊學生」的 bug），比對時分四層把關：
+ * 1. 用「平均臉」比對：把每位學生註冊的幾張特徵值取平均當代表，而不是「跟任何一張接近就算」。
+ *    原本只要跟某一張側臉照剛好接近就會誤中，側臉的區辨力本來就比較差。
+ * 2. 門檻收緊，而且要「多張註冊照都接近」：平均臉距離要小於 FACE_MATCH_THRESHOLD，
+ *    且至少 FACE_MIN_REF_AGREE 張個別註冊照也在 FACE_REF_THRESHOLD 以內。
+ * 3. 有多人註冊時，第一名必須明顯贏過第二名（差距至少 FACE_MATCH_MARGIN），
+ *    兩個人都「有點像」的曖昧情況寧可不認，交給卡片或手動點名。
+ * 4. 太小、太模糊的臉（偵測信心低、臉框太小）不拿來比對——這種臉算出來的特徵值本身就不準，
+ *    是遠距離誤認的主要來源。
+ * 另外連續命中的次數也從 2 次提高到 FACE_CONFIRM_HITS 次，而且要一直是同一個人才累積。
+ * 如果實測發現「本人也常常認不出來」，可以把 FACE_MATCH_THRESHOLD 稍微調大（例如 0.45）；
+ * 如果還是會認錯人，就再調小（例如 0.38）。 */
+var FACE_REF_THRESHOLD = 0.48;  // 個別註冊照的距離門檻
+var FACE_MIN_REF_AGREE = 2;     // 至少幾張註冊照要在上面的門檻內
+var FACE_MATCH_MARGIN = 0.06;   // 多人註冊時，第一名與第二名至少要差這麼多
+var FACE_MIN_DET_SCORE = 0.55;  // 臉部偵測信心值低於這個就不拿來比對
+var FACE_MIN_BOX_PX = 40;       // 臉框寬度（處理畫面上的像素）小於這個就不拿來比對
+var FACE_CONFIRM_HITS = 3;      // 同一個人要連續命中幾次才送出點名
+
+function buildFaceCentroids(roster){
+  var out={};
+  Object.keys(roster||{}).forEach(function(seat){
+    var refs=roster[seat]||[];
+    if(!refs.length) return;
+    var n=refs[0].length, c=new Float32Array(n);
+    refs.forEach(function(r){ for(var i=0;i<n;i++) c[i]+=r[i]; });
+    for(var i=0;i<n;i++) c[i]/=refs.length;
+    out[seat]=c;
   });
-  return bestSeat;
+  return out;
+}
+function matchFace(descriptor){
+  var cents=S.faceCentroids||{};
+  var ranked=Object.keys(cents).map(function(seat){
+    return { seat:+seat, dist:faceapi.euclideanDistance(descriptor, cents[seat]) };
+  }).sort(function(a,b){ return a.dist-b.dist; });
+  if(!ranked.length) return null;
+  var best=ranked[0];
+  if(best.dist>=FACE_MATCH_THRESHOLD) return null;                                   // 第 2 層：平均臉不夠像
+  if(ranked.length>1 && ranked[1].dist-best.dist<FACE_MATCH_MARGIN) return null;     // 第 3 層：跟第二名分不開
+  var agree=(S.faceRoster[best.seat]||[]).filter(function(ref){
+    return faceapi.euclideanDistance(descriptor, ref)<FACE_REF_THRESHOLD;
+  }).length;
+  if(agree<Math.min(FACE_MIN_REF_AGREE,(S.faceRoster[best.seat]||[]).length)) return null; // 第 2 層：多張註冊照都要接近
+  return best;
+}
+function faceQualityOk(res){
+  return res.detection.score>=FACE_MIN_DET_SCORE && res.detection.box.width>=FACE_MIN_BOX_PX; // 第 4 層
 }
 function detectFaces(){
   // 重用 PlickersVision 已經畫在 proc 這個 canvas 上的當下畫面，不用另外再截一次圖，
@@ -1515,12 +1555,14 @@ function detectFaces(){
     .then(function(results){
       var now=performance.now();
       results.forEach(function(res){
-        var seat=matchFace(res.descriptor);
-        if(seat==null) return;
+        if(!faceQualityOk(res)) return;
+        var m=matchFace(res.descriptor);
+        if(!m) return;
+        var seat=m.seat;
         var tr=faceTracks[seat];
         if(!tr || now-tr.last>2200){ tr=faceTracks[seat]={hits:0,last:now}; }
         tr.hits++; tr.last=now; tr.box=res.detection.box;
-        if(tr.hits>=2 && !S.marks[seat]) checkIn(seat,'face');
+        if(tr.hits>=FACE_CONFIRM_HITS && !S.marks[seat]) checkIn(seat,'face');
       });
     });
 }
@@ -1549,15 +1591,23 @@ function runGroupPhotoScan(){
     return faceapi.detectAllFaces(canvas, new faceapi.SsdMobilenetv1Options({minConfidence:0.5, maxResults:100}))
       .withFaceLandmarks().withFaceDescriptors();
   }).then(function(results){
-    var matched=[], seenSeats={}, unmatched=0;
+    var matched=[], bestBySeat={}, unmatched=0;
     results.forEach(function(res){
-      var seat=matchFace(res.descriptor);
-      if(seat==null){ unmatched++; return; }
-      if(seenSeats[seat]) return; // 同一個人在畫面裡因角度重複偵測到兩次，只算一筆
-      seenSeats[seat]=true;
-      var st=studentBySeat(seat);
+      var m=matchFace(res.descriptor);
+      if(!m){ unmatched++; return; }
+      // 同一位學生在一張合照裡只可能出現一次：如果有兩張以上的臉都被比對成同一人，
+      // 只保留最像的那一張，其餘視為無法比對，避免把別人也算成這位學生。
+      if(bestBySeat[m.seat]){
+        unmatched++;
+        if(m.dist<bestBySeat[m.seat].dist) bestBySeat[m.seat]=m;
+        return;
+      }
+      bestBySeat[m.seat]=m;
+    });
+    Object.keys(bestBySeat).forEach(function(k){
+      var st=studentBySeat(+k);
       if(!st) return;
-      matched.push({ seat:seat, name:st.name, already: !!S.marks[st.seat] });
+      matched.push({ seat:+k, name:st.name, already: !!S.marks[st.seat] });
     });
     matched.sort(function(a,b){ return a.seat-b.seat; });
     gpRenderReview(results.length, matched, unmatched);
@@ -1788,10 +1838,10 @@ function start(){
     ensureFaceModels().catch(function(e){ toast('人臉辨識模型載入失敗，本次僅能用卡片點名：'+(e&&e.message||e), 5500); });
     call('faceData', S.sheet).then(function(list){
       var m={}; (list||[]).forEach(function(e){ m[e.seat]=e.descriptors; });
-      S.faceRoster=m;
-    }).catch(function(e){ S.faceRoster={}; toast('讀取人臉註冊資料失敗，本次僅能用卡片點名：'+(e&&e.message||e), 5500); });
+      S.faceRoster=m; S.faceCentroids=buildFaceCentroids(m);
+    }).catch(function(e){ S.faceRoster={}; S.faceCentroids={}; toast('讀取人臉註冊資料失敗，本次僅能用卡片點名：'+(e&&e.message||e), 5500); });
   } else {
-    S.faceRoster={};
+    S.faceRoster={}; S.faceCentroids={};
   }
   renderPhase(); phaseTimer=setInterval(renderPhase, 500);
   $('hudClass').firstChild.nodeValue=S.sheet; $('hudDate').textContent=S.roster?S.roster.dateKey:'';
