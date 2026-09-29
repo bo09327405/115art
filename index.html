@@ -94,6 +94,12 @@ select.inp{font-family:var(--sans);font-size:15px;font-weight:500}
 .switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .18s}
 .switch[aria-checked="true"]{background:var(--ink)}
 .switch[aria-checked="true"]::after{transform:translateX(18px)}
+.facethrow{display:none}
+.facethrow.on{display:flex}
+.facethrow .tt{width:100%}
+.facethrow output{font-variant-numeric:tabular-nums;color:var(--spike)}
+.facethrow input[type=range]{width:100%;margin:8px 0 0;accent-color:var(--ink)}
+.thscale{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-2)}
 
 /* 時間規則條：準時 / 遲到 / 缺席 */
 .rule{display:grid;grid-template-columns:1fr 1fr 1fr;border-radius:6px;overflow:hidden;font-size:13px}
@@ -371,6 +377,12 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
           <div class="tt"><b>人臉辨識點名</b><span>鏡頭同時偵測 Plickers 卡片與已註冊學生的臉，抓到哪個就記錄哪個</span></div>
           <button type="button" class="switch" id="faceSwitch" role="switch" aria-checked="false"></button>
         </div>
+        <div class="toggle facethrow" id="faceThRow">
+          <div class="tt"><b>辨識嚴格度　<output id="faceThVal">0.38</output></b><span>數值越小越嚴格。會把別人認成學生就調小；學生本人常認不出來就調大。建議用點名畫面的「比對分數」實測後再調整</span>
+            <input type="range" id="faceThRange" min="0.28" max="0.50" step="0.01" value="0.38" aria-label="辨識嚴格度">
+            <div class="thscale"><span>嚴格</span><span>寬鬆</span></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -419,6 +431,7 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
       <button class="btn" id="flipBtn" aria-label="切換鏡頭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v12H4z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/></svg><span class="t">切換鏡頭</span></button>
       <button class="btn" id="soundBtn" aria-pressed="true" aria-label="提示音"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h4l5 4V6L8 10z"/><path id="wave" d="M16 9a4 4 0 0 1 0 6"/></svg><span class="t">提示音</span></button>
       <button class="btn" id="groupPhotoBtn" aria-label="全班合照辨識" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3.2 3.1-5.5 7-5.5s7 2.3 7 5.5"/><circle cx="17.3" cy="9" r="2.2"/><path d="M15.8 13.1c2.5.4 4.2 2.1 4.2 4.4"/></svg><span class="t">全班合照</span></button>
+      <button class="btn" id="faceDebugBtn" aria-pressed="false" aria-label="顯示比對分數（校準模式）" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="t">比對分數</span></button>
       <div class="sync" id="sync" data-st="ok"><i></i><span id="syncText">已同步</span></div>
       <button class="btn end" id="endBtn"><span class="t">結束點名</span></button>
     </div>
@@ -774,7 +787,7 @@ var IS_DEMO = !API_URL || API_URL.indexOf('PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE'
  * ==================================================================== */
 var FACE_LIB_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.min.js';
 var FACE_MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model';
-var FACE_MATCH_THRESHOLD = 0.42; // 與「平均臉」的距離門檻，越小越嚴格（原本 0.5 太寬鬆，會把別人認成已註冊學生）
+var FACE_THRESHOLD_DEFAULT = 0.38; // 「辨識嚴格度」預設值：與「平均臉」的距離門檻，越小越嚴格（實際值由設定頁滑桿調整）
 // TinyFaceDetector 內部會把畫面「硬塞縮小」成 inputSize×inputSize 再去偵測，
 // 原本用 224 對近距離夠用，但距離一拉遠、臉在畫面裡本來就小，縮到 224 之後幾乎沒細節可看，
 // 就會偵測不到。調大 inputSize 能讓遠處的小臉保留比較多細節，代價是每次偵測稍微慢一點，
@@ -894,6 +907,8 @@ var S = {
   queue:[], inflight:false, running:false, sound:true,
   bonusMode:false, // 手動加分：點座位改為顯示加減分按鈕
   faceEnabled:false, // 人臉辨識點名開關（新增）
+  faceThreshold:0.38, // 辨識嚴格度（與平均臉的距離門檻，越小越嚴格），設定頁滑桿可調
+  faceDebug:false,    // 「比對分數」校準模式：在鏡頭畫面上顯示每張臉的比對細節（不存檔，只限本次）
   faceRoster:{},      // seat → 已註冊的臉部特徵值陣列（開始點名時才會抓）
   faceCentroids:{},   // seat → 該學生註冊特徵值的平均（「平均臉」，比對時用）
   faceCounts:{},      // sheet → 該班已完成人臉註冊的人數（僅供顯示）
@@ -1376,13 +1391,14 @@ $('regDlg').addEventListener('click', function(ev){ if(ev.target===$('regDlg')) 
 $('regDlg').addEventListener('close', function(){ regStopAutoCapture(); regStopCamera(); try{speechSynthesis.cancel();}catch(e){} });
 
 function persist(){
-  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled}).catch(function(){});
+  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled, faceThreshold:S.faceThreshold}).catch(function(){});
 }
 
 /* ---------- 人臉辨識開關 ---------- */
 function setFaceEnabled(v, silent){
   S.faceEnabled=!!v;
   $('faceSwitch').setAttribute('aria-checked', String(S.faceEnabled));
+  $('faceThRow').classList.toggle('on', S.faceEnabled);
   renderClasses();
   if(S.faceEnabled){
     ensureFaceModels().then(function(){ if(!silent) toast('人臉辨識已就緒，開始點名時會一併偵測'); })
@@ -1391,6 +1407,23 @@ function setFaceEnabled(v, silent){
   if(!silent) persist();
 }
 $('faceSwitch').onclick=function(){ setFaceEnabled(!S.faceEnabled); };
+
+/* ---------- 辨識嚴格度滑桿 ---------- */
+function setFaceThreshold(v, silent){
+  var n=Math.round(Math.min(0.50, Math.max(0.28, +v||FACE_THRESHOLD_DEFAULT))*100)/100;
+  S.faceThreshold=n;
+  $('faceThRange').value=n; $('faceThVal').textContent=n.toFixed(2);
+  if(!silent) persist();
+}
+$('faceThRange').addEventListener('input', function(){ setFaceThreshold(this.value, true); });
+$('faceThRange').addEventListener('change', function(){ setFaceThreshold(this.value); }); // 放開滑桿才存檔，避免拖曳時一直寫入
+
+/* ---------- 「比對分數」校準模式 ---------- */
+$('faceDebugBtn').onclick=function(){
+  S.faceDebug=!S.faceDebug;
+  this.setAttribute('aria-pressed', String(S.faceDebug));
+  toast(S.faceDebug ? '校準模式：每張臉會顯示最像的學生與距離，距離小於目前門檻 '+S.faceThreshold.toFixed(2)+' 才會通過' : '已關閉比對分數顯示', S.faceDebug?5000:2000);
+};
 
 /* ---------- 點名判定 ---------- */
 function currentPhase(){
@@ -1501,17 +1534,16 @@ function loop(t){
  * 防誤認（修正「別人的臉被認成已註冊學生」的 bug），比對時分四層把關：
  * 1. 用「平均臉」比對：把每位學生註冊的幾張特徵值取平均當代表，而不是「跟任何一張接近就算」。
  *    原本只要跟某一張側臉照剛好接近就會誤中，側臉的區辨力本來就比較差。
- * 2. 門檻收緊，而且要「多張註冊照都接近」：平均臉距離要小於 FACE_MATCH_THRESHOLD，
- *    且至少 FACE_MIN_REF_AGREE 張個別註冊照也在 FACE_REF_THRESHOLD 以內。
+ * 2. 門檻收緊，而且要「多張註冊照都接近」：平均臉距離要小於 S.faceThreshold（設定頁「辨識嚴格度」滑桿），
+ *    且至少 FACE_MIN_REF_AGREE 張個別註冊照也在「門檻＋0.06」以內。
  * 3. 有多人註冊時，第一名必須明顯贏過第二名（差距至少 FACE_MATCH_MARGIN），
  *    兩個人都「有點像」的曖昧情況寧可不認，交給卡片或手動點名。
  * 4. 太小、太模糊的臉（偵測信心低、臉框太小）不拿來比對——這種臉算出來的特徵值本身就不準，
  *    是遠距離誤認的主要來源。
  * 另外連續命中的次數也從 2 次提高到 FACE_CONFIRM_HITS 次，而且要一直是同一個人才累積。
- * 如果實測發現「本人也常常認不出來」，可以把 FACE_MATCH_THRESHOLD 稍微調大（例如 0.45）；
- * 如果還是會認錯人，就再調小（例如 0.38）。 */
-var FACE_REF_THRESHOLD = 0.48;  // 個別註冊照的距離門檻
-var FACE_MIN_REF_AGREE = 2;     // 至少幾張註冊照要在上面的門檻內
+ * 門檻合適的數值跟班上的臉孔、鏡頭、光線都有關，請用點名畫面的「比對分數」校準模式實測後，
+ * 在設定頁的「辨識嚴格度」調整，不用改程式碼。 */
+var FACE_MIN_REF_AGREE = 2;     // 至少幾張註冊照要在「門檻＋0.06」以內
 var FACE_MATCH_MARGIN = 0.06;   // 多人註冊時，第一名與第二名至少要差這麼多
 var FACE_MIN_DET_SCORE = 0.55;  // 臉部偵測信心值低於這個就不拿來比對
 var FACE_MIN_BOX_PX = 40;       // 臉框寬度（處理畫面上的像素）小於這個就不拿來比對
@@ -1529,41 +1561,48 @@ function buildFaceCentroids(roster){
   });
   return out;
 }
-function matchFace(descriptor){
+function matchFaceDetailed(descriptor){
+  var th=S.faceThreshold, refTh=th+0.06;
   var cents=S.faceCentroids||{};
   var ranked=Object.keys(cents).map(function(seat){
     return { seat:+seat, dist:faceapi.euclideanDistance(descriptor, cents[seat]) };
   }).sort(function(a,b){ return a.dist-b.dist; });
-  if(!ranked.length) return null;
-  var best=ranked[0];
-  if(best.dist>=FACE_MATCH_THRESHOLD) return null;                                   // 第 2 層：平均臉不夠像
-  if(ranked.length>1 && ranked[1].dist-best.dist<FACE_MATCH_MARGIN) return null;     // 第 3 層：跟第二名分不開
-  var agree=(S.faceRoster[best.seat]||[]).filter(function(ref){
-    return faceapi.euclideanDistance(descriptor, ref)<FACE_REF_THRESHOLD;
-  }).length;
-  if(agree<Math.min(FACE_MIN_REF_AGREE,(S.faceRoster[best.seat]||[]).length)) return null; // 第 2 層：多張註冊照都要接近
-  return best;
+  if(!ranked.length) return { ok:false, best:null, reason:'本班沒有人註冊' };
+  var best=ranked[0], second=ranked[1]||null;
+  if(best.dist>=th) return { ok:false, best:best, second:second, reason:'超過門檻' };                               // 第 2 層
+  if(second && second.dist-best.dist<FACE_MATCH_MARGIN) return { ok:false, best:best, second:second, reason:'跟第二像的分不開' }; // 第 3 層
+  var refs=S.faceRoster[best.seat]||[];
+  var agree=refs.filter(function(ref){ return faceapi.euclideanDistance(descriptor, ref)<refTh; }).length;
+  if(agree<Math.min(FACE_MIN_REF_AGREE,refs.length)) return { ok:false, best:best, second:second, reason:'註冊照一致性不足' }; // 第 2 層
+  return { ok:true, best:best, second:second, reason:'' };
+}
+function matchFace(descriptor){
+  var r=matchFaceDetailed(descriptor);
+  return r.ok ? r.best : null;
 }
 function faceQualityOk(res){
   return res.detection.score>=FACE_MIN_DET_SCORE && res.detection.box.width>=FACE_MIN_BOX_PX; // 第 4 層
 }
+var faceDebugList=[], faceDebugAt=0; // 「顯示比對分數」校準模式用：最近一次偵測到的每張臉＋比對細節
 function detectFaces(){
   // 重用 PlickersVision 已經畫在 proc 這個 canvas 上的當下畫面，不用另外再截一次圖，
   // 座標系統也因此跟卡片框一樣可以直接用同一個 mapper() 換算成螢幕座標。
   return faceapi.detectAllFaces(proc, new faceapi.TinyFaceDetectorOptions({inputSize:FACE_DETECT_INPUT_SIZE, scoreThreshold:0.4}))
     .withFaceLandmarks().withFaceDescriptors()
     .then(function(results){
-      var now=performance.now();
+      var now=performance.now(), dbg=[];
       results.forEach(function(res){
-        if(!faceQualityOk(res)) return;
-        var m=matchFace(res.descriptor);
-        if(!m) return;
-        var seat=m.seat;
+        if(!faceQualityOk(res)){ dbg.push({ box:res.detection.box, ok:false, best:null, reason:'臉太小或太模糊' }); return; }
+        var r=matchFaceDetailed(res.descriptor);
+        dbg.push({ box:res.detection.box, ok:r.ok, best:r.best, second:r.second, reason:r.reason });
+        if(!r.ok) return;
+        var seat=r.best.seat;
         var tr=faceTracks[seat];
         if(!tr || now-tr.last>2200){ tr=faceTracks[seat]={hits:0,last:now}; }
         tr.hits++; tr.last=now; tr.box=res.detection.box;
         if(tr.hits>=FACE_CONFIRM_HITS && !S.marks[seat]) checkIn(seat,'face');
       });
+      faceDebugList=dbg; faceDebugAt=now;
     });
 }
 
@@ -1714,6 +1753,30 @@ function draw(now){
     octx.fillStyle='rgba(255,255,255,.75)';
     octx.fillText(sub, bx+padX+dot+fs*0.4, cy+fs*0.12+fs*0.72);
   });
+  // 「比對分數」校準模式：畫出每一張偵測到的臉（包含被拒絕的），顯示最像哪位學生、距離、有沒有通過
+  if(S.faceDebug){
+    if(now-faceDebugAt>1200) return;
+    faceDebugList.forEach(function(d){
+      var b=d.box, p0=M([b.x,b.y]), p1=M([b.x+b.width,b.y+b.height]);
+      var x=Math.min(p0[0],p1[0]), y=Math.min(p0[1],p1[1]), w=Math.abs(p1[0]-p0[0]), h=Math.abs(p1[1]-p0[1]);
+      var col = d.ok ? '#14A06A' : '#D6403A';
+      octx.lineWidth=3; octx.strokeStyle=col; octx.setLineDash(d.ok?[]:[8,6]); octx.strokeRect(x,y,w,h); octx.setLineDash([]);
+      var lines=[];
+      if(d.best){
+        var st=studentBySeat(d.best.seat);
+        lines.push('最像：'+(st?pad(st.seat)+st.name:'#'+d.best.seat)+'　距離 '+d.best.dist.toFixed(3));
+        if(d.second){ var st2=studentBySeat(d.second.seat); lines.push('第二像：'+(st2?pad(st2.seat)+st2.name:'#'+d.second.seat)+'　'+d.second.dist.toFixed(3)); }
+      }
+      lines.push(d.ok ? '✓ 通過（門檻 '+S.faceThreshold.toFixed(2)+'）' : '✗ '+d.reason+(d.best?'（門檻 '+S.faceThreshold.toFixed(2)+'）':''));
+      octx.font='700 14px "Noto Sans TC", system-ui, sans-serif';
+      var lh=20, bw=Math.max.apply(null, lines.map(function(t){ return octx.measureText(t).width; }))+20, bh=lines.length*lh+10;
+      var by=Math.max(0, y-bh-4);
+      octx.fillStyle='rgba(18,20,26,.88)'; roundRect(octx, x, by, bw, bh, 8); octx.fill();
+      octx.textBaseline='alphabetic';
+      lines.forEach(function(t,i){ octx.fillStyle = (i===lines.length-1) ? (d.ok?'#6FE0AE':'#FF8A84') : '#fff'; octx.fillText(t, x+10, by+5+lh*(i+1)-5); });
+    });
+    return;
+  }
   // 人臉辨識框（新增）：跟上面卡片框共用同一個 mapper()，因為都是從同一個 proc canvas 算出來的座標
   Object.keys(faceTracks).forEach(function(seat){
     var tr=faceTracks[seat];
@@ -1834,6 +1897,7 @@ function start(){
   // 人臉辨識（新增）：跟上面點名流程平行進行，不會卡住開始點名的速度；
   // 模型或資料還沒準備好之前，鏡頭已經先開了，準備好後這堂課後面偵測到的臉才會生效。
   $('groupPhotoBtn').style.display = S.faceEnabled ? '' : 'none';
+  $('faceDebugBtn').style.display = S.faceEnabled ? '' : 'none';
   if(S.faceEnabled){
     ensureFaceModels().catch(function(e){ toast('人臉辨識模型載入失敗，本次僅能用卡片點名：'+(e&&e.message||e), 5500); });
     call('faceData', S.sheet).then(function(list){
@@ -1909,6 +1973,7 @@ function applyBootstrap(b){
   if(s.bonusMode){ S.bonusMode=true; $('bonusSwitch').setAttribute('aria-checked','true'); }
   S.faceCounts = b.faceCounts || {};
   if(s.faceEnabled) setFaceEnabled(true, true);
+  setFaceThreshold(typeof s.faceThreshold==='number' ? s.faceThreshold : FACE_THRESHOLD_DEFAULT, true);
   if(s.sheet && S.classes.some(function(c){return c.sheet===s.sheet;})) S.sheet=s.sheet;
   renderRule(); renderClasses();
   if(S.cam!=='env'&&S.cam!=='user'){ var o=document.createElement('option'); o.value=S.cam; o.textContent='上次使用的攝影機'; $('camSel').appendChild(o); }
