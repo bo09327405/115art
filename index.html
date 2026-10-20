@@ -106,6 +106,9 @@ select.inp{font-family:var(--sans);font-size:15px;font-weight:500}
 .rule div{padding:8px 10px;color:#fff;line-height:1.3}
 .rule div b{display:block;font-family:var(--num);font-size:20px;font-weight:700}
 .rule .r1{background:var(--ontime)}.rule .r2{background:var(--late);color:#2A1E00}.rule .r3{background:var(--absent)}
+.rule.rule4{grid-template-columns:repeat(4,1fr);margin-top:10px}
+.rule .r0{background:var(--bonus)}
+.rule.rule4 div b{font-size:17px}
 
 /* ============ 人臉辨識點名／學生人臉註冊（新增） ============ */
 .linkbtn{appearance:none;border:1.5px solid var(--line);background:#fff;color:var(--ink);height:44px;border-radius:6px;font-weight:700;cursor:pointer;width:100%}
@@ -231,6 +234,7 @@ select.inp{font-family:var(--sans);font-size:15px;font-weight:500}
 .phase span{font-size:13px;opacity:.85}
 .phase[data-p="L"] i{background:var(--late);box-shadow:0 0 0 4px rgba(229,160,0,.3)}
 .phase[data-p="x"] i{background:var(--absent);box-shadow:0 0 0 4px rgba(214,64,58,.3)}
+.phase[data-p="E"] i{background:var(--bonus);box-shadow:0 0 0 4px rgba(201,151,31,.35)}
 .counts{display:flex;gap:14px;text-align:center;font-size:12px}
 .counts b{display:block;font-family:var(--num);font-size:30px;line-height:1;font-weight:700}
 .counts .c1 b{color:#4BE0A2}.counts .c2 b{color:#FFC83D}.counts .c0 b{color:#fff}
@@ -338,24 +342,44 @@ dialog::backdrop{background:rgba(10,12,18,.6)}
         <input class="inp" type="date" id="date">
       </div>
       <div class="field">
-        <label for="late">遲到時間</label>
-        <input class="inp" type="time" id="late" value="08:10">
+        <label for="late">上課時間</label>
+        <input class="inp" type="time" id="late" value="08:00">
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <span class="lab" id="lateLab">上課後幾分鐘算遲到</span>
+        <div class="stepper" role="group" aria-labelledby="lateLab">
+          <button type="button" id="lateMinus" aria-label="減少 1 分鐘">−</button>
+          <output><span id="lateVal">5</span><small>分鐘</small></output>
+          <button type="button" id="latePlus" aria-label="增加 1 分鐘">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="lab" id="absLab">上課後幾分鐘算曠課</span>
+        <div class="stepper" role="group" aria-labelledby="absLab">
+          <button type="button" id="absMinus" aria-label="減少 1 分鐘">−</button>
+          <output id="absOut"><span id="absVal">15</span><small>分鐘</small></output>
+          <button type="button" id="absPlus" aria-label="增加 1 分鐘">+</button>
+        </div>
       </div>
     </div>
 
     <div class="field">
-      <span class="lab" id="absLab">遲到多久算缺席</span>
-      <div class="stepper" role="group" aria-labelledby="absLab">
-        <button type="button" id="absMinus" aria-label="減少 5 分鐘">−</button>
-        <output id="absOut"><span id="absVal">20</span><small>分鐘</small></output>
-        <button type="button" id="absPlus" aria-label="增加 5 分鐘">+</button>
+      <div class="togglebox">
+        <div class="toggle">
+          <div class="tt"><b>上課前抵達加 1 分</b><span>在上課時間之前刷卡／刷臉，除了記準時，當天的手動加分欄也會自動 +1</span></div>
+          <button type="button" class="switch" id="earlySwitch" role="switch" aria-checked="true"></button>
+        </div>
       </div>
-      <div class="rule" aria-live="polite">
-        <div class="r1">準時 寫入 1<b id="rt1">~08:10</b></div>
-        <div class="r2">遲到 寫入 L<b id="rt2">~08:30</b></div>
-        <div class="r3">缺席 寫入 x<b id="rt3">08:30~</b></div>
+      <div class="rule rule4" aria-live="polite">
+        <div class="r0">早到 1 ＋1分<b id="rt0">~08:00</b></div>
+        <div class="r1">準時 寫入 1<b id="rt1">~08:05</b></div>
+        <div class="r2">遲到 寫入 L<b id="rt2">~08:15</b></div>
+        <div class="r3">曠課 寫入 x<b id="rt3">08:15~</b></div>
       </div>
-      <p class="hint">結束點名時，完全沒刷卡的人另外登記為 X（未到，網頁上顯示灰底），跟上面的缺席 x 分開統計。</p>
+      <p class="hint">結束點名時，完全沒刷卡的人另外登記為 X（未到，網頁上顯示灰底），跟上面的曠課 x 分開統計。</p>
     </div>
 
     <div class="field">
@@ -772,7 +796,7 @@ var $ = function(id){ return document.getElementById(id); };
  * 在還沒填之前，頁面會自動用「示範資料」跑，方便你先預覽介面與鏡頭效果，
  * 但點名結果不會真的寫進任何試算表。
  * ==================================================================== */
-var API_URL = 'https://script.google.com/macros/s/AKfycbxgOCnwLhR7FeYgv8Nn7GhSNBApONsGTQAYW-PYRNgz_dpESSYRVB4RCP3fXSONTQ_V/exec';
+var API_URL = 'https://script.google.com/macros/s/AKfycbzOqzz3A7wr8YEHQ5JHPDzZQZ-V6ok3bB0sm94qIagwx76V8pOD9KMO6Qm7DfGOk33P/exec';
 
 var IS_DEMO = !API_URL || API_URL.indexOf('PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') >= 0;
 
@@ -881,7 +905,7 @@ var Demo = (function(){
     saveSettings:function(){ return true; },
     getRoster:function(s,iso){ return {sheet:s,label:s,dateKey:iso.slice(5).replace(/^0/,'').replace('-0','/').replace('-','/'),dateCol:5,students:roster(s)}; },
     startSession:function(s,iso){ var r=this.getRoster(s,iso); r.colLetter='E'; return r; },
-    recordBatch:function(s,iso,recs,ow){ return {results:recs.map(function(r){ var k=s+r.row; if(store[k]&&!ow) return {row:r.row,ok:true,kept:true,mark:store[k]}; store[k]=r.status; return {row:r.row,ok:true,mark:r.status}; })}; },
+    recordBatch:function(s,iso,recs,ow){ return {results:recs.map(function(r){ var k=s+r.row; if(store[k]&&!ow) return {row:r.row,ok:true,kept:true,mark:store[k]}; store[k]=r.status; var res={row:r.row,ok:true,mark:r.status}; if(r.early&&r.status==='1'){ var bk=s+':'+r.seat; bonus[bk]=(bonus[bk]||0)+(r.earlyBonus||1); res.bonus=bonus[bk]; } return res; })}; },
     markAbsent:function(s,iso,rows){ return this.recordBatch(s,iso,rows.map(function(r){return {row:r.row,seat:r.seat,status:'X'};}),false); },
     adjustBonus:function(s,iso,row,seat,delta){
       var k=s+':'+seat; var next=(bonus[k]||0)+delta;
@@ -901,7 +925,8 @@ var Demo = (function(){
 
 /* ---------- 狀態 ---------- */
 var S = {
-  classes:[], sheet:null, roster:null, iso:'', late:'08:10', absentAfter:20, cam:'env',
+  classes:[], sheet:null, roster:null, iso:'', late:'08:00', lateAfter:5, absentAt:15, earlyBonus:true, // late＝上課時間；lateAfter／absentAt＝上課後幾分鐘算遲到／曠課；earlyBonus＝上課前抵達加 1 分
+  cam:'env',
   marks:{},        // seat → { status, time, pending }
   bonus:{},        // seat → 當天手動加分累計（跟出缺勤狀態分開存）
   queue:[], inflight:false, running:false, sound:true,
@@ -935,11 +960,16 @@ function toast(msg, ms){ var t=$('toast'); t.textContent=msg; t.classList.add('o
 
 /* ---------- 設定頁 ---------- */
 function renderRule(){
-  var l=toMin(S.late), a=l+S.absentAfter;
+  var t=toMin(S.late), l=t+S.lateAfter, a=t+S.absentAt;
+  $('rt0').textContent='~'+hhmm(t);
   $('rt1').textContent='~'+hhmm(l);
   $('rt2').textContent='~'+hhmm(a);
   $('rt3').textContent=hhmm(a)+'~';
-  $('absVal').textContent=S.absentAfter;
+  $('lateVal').textContent=S.lateAfter;
+  $('absVal').textContent=S.absentAt;
+  $('earlySwitch').setAttribute('aria-checked', String(S.earlyBonus));
+  document.querySelector('.rule .r0').style.display = S.earlyBonus ? '' : 'none';
+  document.querySelector('.rule.rule4').style.gridTemplateColumns = S.earlyBonus ? '' : 'repeat(3,1fr)';
 }
 function renderClasses(){
   var box=$('classes'); box.innerHTML='';
@@ -1139,7 +1169,7 @@ document.addEventListener('click', closeBonus);
  * ==================================================================== */
 var CONSENT_VERSION = 'v1'; // 要跟 Code.gs 裡的 CONSENT_VERSION 對應；改了同意書文字記得兩邊都更新
 var CONSENT_TEXT =
-'【表演藝術課-臉部辨識授權同意書】\n\n'+
+'人臉辨識點名同意書（範本，請授課教師／學校依實際規定調整後使用，本文字僅供參考，非正式法律意見）\n\n'+
 '為提升課堂點名效率，授課教師擬於課堂點名時，透過鏡頭拍攝影像並即時擷取臉部特徵數值（不會儲存完整照片，只會儲存無法還原成影像的一組數字），用來自動比對出席學生身份。\n\n'+
 '1. 蒐集目的：課堂出缺勤點名紀錄之建立與查核。\n'+
 '2. 蒐集項目：臉部特徵數值（並非照片本身）、班級、座號、姓名、註冊時間。\n'+
@@ -1391,7 +1421,7 @@ $('regDlg').addEventListener('click', function(ev){ if(ev.target===$('regDlg')) 
 $('regDlg').addEventListener('close', function(){ regStopAutoCapture(); regStopCamera(); try{speechSynthesis.cancel();}catch(e){} });
 
 function persist(){
-  call('saveSettings', {sheet:S.sheet, late:S.late, absentAfter:S.absentAfter, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled, faceThreshold:S.faceThreshold}).catch(function(){});
+  call('saveSettings', {sheet:S.sheet, late:S.late, lateAfter:S.lateAfter, absentAt:S.absentAt, earlyBonus:S.earlyBonus, cam:S.cam, bonusMode:S.bonusMode, faceEnabled:S.faceEnabled, faceThreshold:S.faceThreshold}).catch(function(){});
 }
 
 /* ---------- 人臉辨識開關 ---------- */
@@ -1426,9 +1456,12 @@ $('faceDebugBtn').onclick=function(){
 };
 
 /* ---------- 點名判定 ---------- */
+/* 四段制：上課前抵達＝準時＋1分（可關閉）；上課後 lateAfter 分鐘內＝準時；
+   超過 lateAfter 分鐘＝遲到 L；超過 absentAt 分鐘＝曠課 x。 */
 function currentPhase(){
   var d=new Date(), now=d.getHours()*60+d.getMinutes()+d.getSeconds()/60;
-  var l=toMin(S.late), a=l+S.absentAfter;
+  var t=toMin(S.late), l=t+S.lateAfter, a=t+S.absentAt;
+  if(now<t)  return {s:'1', pre:true, early:S.earlyBonus, left:(t-now)*60};
   if(now<=l) return {s:'1', left:(l-now)*60};
   if(now<=a) return {s:'L', left:(a-now)*60};
   return {s:'x', left:(now-a)*60};
@@ -1436,9 +1469,9 @@ function currentPhase(){
 function renderPhase(){
   var p=currentPhase(), sec=Math.max(0,Math.floor(p.left));
   var hh=Math.floor(sec/3600), mm=Math.floor(sec%3600/60), ss=sec%60, t=(hh?hh+':':'')+pad(mm)+':'+pad(ss);
-  $('phase').dataset.p=p.s;
+  $('phase').dataset.p = p.early ? 'E' : p.s;
   $('phaseClock').textContent = (p.s==='x'?'+':'')+t;
-  $('phaseText').textContent = p.s==='1' ? '後開始算遲到' : p.s==='L' ? '後改記缺席' : '已過缺席時間，刷卡記為缺席';
+  $('phaseText').textContent = p.pre ? (p.early ? '後上課（現在到 ＋1分）' : '後上課') : p.s==='1' ? '後開始算遲到' : p.s==='L' ? '後改記曠課' : '已過曠課時間，刷卡記為曠課';
 }
 
 /* ---------- 鏡頭 ---------- */
@@ -1711,10 +1744,11 @@ function checkIn(card, method){
   var st=studentBySeat(card);
   if(!st){ return; }
   if(S.marks[st.seat]) return; // 已點過（或試算表已有紀錄）
-  var status=currentPhase().s, time=nowStr();
+  var ph=currentPhase(), status=ph.s, time=nowStr(), early=!!ph.early;
   S.marks[st.seat]={status:status,time:time,pending:true,fresh:performance.now()};
-  S.queue.push({row:st.row,seat:st.seat,status:status,time:time,card:method==='face'?'':card,method:method||'card'});
-  feed(st,status,time,method); beep(status); renderStrip(); renderTally();
+  S.queue.push({row:st.row,seat:st.seat,status:status,time:time,card:method==='face'?'':card,method:method||'card',early:early,earlyBonus:1});
+  if(early){ S.bonus[st.seat]=(S.bonus[st.seat]||0)+1; renderGrid(); } // 先在畫面上顯示 +1，寫入成功後再以試算表回傳的數字為準
+  feed(st,status,time,method,early); beep(status); renderStrip(); renderTally();
   if(navigator.vibrate) navigator.vibrate(status==='1'?30:[30,60,30]);
   flush(); // 固定行為：每次刷卡／刷臉立刻寫入試算表，不再有「批次同步」的選項
 }
@@ -1808,11 +1842,11 @@ function renderStrip(){
     box.appendChild(s);
   });
 }
-function feed(st,status,time,method){
+function feed(st,status,time,method,early){
   var f=$('feed'), d=document.createElement('div');
   d.innerHTML='<i style="background:'+statusColor(status)+'"></i><em></em><span></span><small></small>';
   d.querySelector('em').textContent=pad(st.seat); d.querySelector('span').textContent=st.name+(method==='face'?' 👤':'');
-  d.querySelector('small').textContent=statusName(status)+' '+time.slice(0,5);
+  d.querySelector('small').textContent=statusName(status)+(early?' ＋1分':'')+' '+time.slice(0,5);
   f.insertBefore(d, f.firstChild);
   while(f.children.length>4) f.removeChild(f.lastChild);
   setTimeout(function(){ if(d.parentNode) d.remove(); }, 6000);
@@ -1842,13 +1876,16 @@ function flush(){
   var batch=S.queue.splice(0,S.queue.length); S.inflight=true;
   setSync('busy','寫入 '+batch.length+' 筆中…');
   call('recordBatch', S.sheet, S.iso, batch, false).then(function(r){
-    S.inflight=false;
+    S.inflight=false; var bonusChanged=false;
     r.results.forEach(function(x,i){
       var st=batch[i], m=S.marks[st.seat];
-      if(!x.ok){ delete S.marks[st.seat]; toast(pad(st.seat)+' 寫入失敗：'+x.reason,4000); return; }
-      if(x.kept){ S.marks[st.seat]={status:x.mark,time:'',pending:false,pre:true}; toast(pad(st.seat)+' 試算表已有紀錄「'+x.mark+'」，保留原值'); }
+      var undoEarly=function(){ if(st.early){ S.bonus[st.seat]=Math.max(0,(S.bonus[st.seat]||0)-1); bonusChanged=true; } };
+      if(!x.ok){ delete S.marks[st.seat]; undoEarly(); toast(pad(st.seat)+' 寫入失敗：'+x.reason,4000); return; }
+      if(x.kept){ S.marks[st.seat]={status:x.mark,time:'',pending:false,pre:true}; undoEarly(); toast(pad(st.seat)+' 試算表已有紀錄「'+x.mark+'」，保留原值'); }
       else if(m) m.pending=false;
+      if(typeof x.bonus==='number'){ S.bonus[st.seat]=x.bonus; bonusChanged=true; } // 以試算表實際的加分數字為準
     });
+    if(bonusChanged) renderGrid();
     renderStrip(); renderTally();
     setSync('ok','已同步');
   }).catch(function(e){
@@ -1947,9 +1984,13 @@ $('camerrBack').onclick=function(){ stop(); };
 $('flipBtn').onclick=flipCamera;
 $('soundBtn').onclick=function(){ S.sound=!S.sound; this.setAttribute('aria-pressed',S.sound); $('wave').style.display=S.sound?'':'none'; };
 $('date').onchange=function(){ S.iso=this.value||todayISO(); loadRoster(); };
-$('late').onchange=function(){ S.late=this.value||'08:10'; renderRule(); persist(); };
-$('absMinus').onclick=function(){ S.absentAfter=Math.max(0,S.absentAfter-5); renderRule(); persist(); };
-$('absPlus').onclick=function(){ S.absentAfter=Math.min(240,S.absentAfter+5); renderRule(); persist(); };
+$('late').onchange=function(){ S.late=this.value||'08:00'; renderRule(); persist(); };
+// 遲到分鐘數一定要小於曠課分鐘數，調整其中一個時會自動把另一個推開，避免規則打架
+$('lateMinus').onclick=function(){ S.lateAfter=Math.max(0,S.lateAfter-1); renderRule(); persist(); };
+$('latePlus').onclick=function(){ S.lateAfter=Math.min(120,S.lateAfter+1); if(S.absentAt<=S.lateAfter) S.absentAt=S.lateAfter+1; renderRule(); persist(); };
+$('absMinus').onclick=function(){ S.absentAt=Math.max(1,S.absentAt-1); if(S.lateAfter>=S.absentAt) S.lateAfter=S.absentAt-1; renderRule(); persist(); };
+$('absPlus').onclick=function(){ S.absentAt=Math.min(240,S.absentAt+1); renderRule(); persist(); };
+$('earlySwitch').onclick=function(){ S.earlyBonus=!S.earlyBonus; renderRule(); persist(); };
 $('camSel').onchange=function(){ S.cam=this.value; persist(); };
 $('panelToggle').onclick=function(){
   var collapsed=$('setup').classList.toggle('collapsed');
@@ -1968,7 +2009,10 @@ function applyBootstrap(b){
   S.classes=b.classes||[];
   var s=b.settings||{};
   if(s.late){ S.late=s.late; $('late').value=s.late; }
-  if(typeof s.absentAfter==='number') S.absentAfter=s.absentAfter;
+  // 舊版的 absentAfter 是「從遲到時間起算」，意義不同，刻意不沿用，改用新的 lateAfter／absentAt
+  if(typeof s.lateAfter==='number') S.lateAfter=s.lateAfter;
+  if(typeof s.absentAt==='number') S.absentAt=s.absentAt;
+  if(typeof s.earlyBonus==='boolean') S.earlyBonus=s.earlyBonus;
   if(s.cam){ S.cam=s.cam; }
   if(s.bonusMode){ S.bonusMode=true; $('bonusSwitch').setAttribute('aria-checked','true'); }
   S.faceCounts = b.faceCounts || {};
